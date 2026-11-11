@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Mapa Turístico de Orizaba · Pueblo Mágico</title>
+    <meta name="description" content="Recorre Orizaba en un mapa 3D: museos, templos, parques, el Teleférico y el Cerro del Borrego, con recorridos sugeridos." />
+    <meta name="theme-color" content="#1565A8" />
+    <link rel="icon" href="/favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- fonts never block the first paint; data downloads start before the JS even runs -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,600;0,700;1,500&family=Montserrat:wght@400..800&display=swap" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,600;0,700;1,500&family=Montserrat:wght@400..800&display=swap" /></noscript>
+    <link rel="preload" href="/data/map.json" as="fetch" crossorigin />
+    <link rel="preload" href="/data/terrain.bin" as="fetch" crossorigin />
+    <link rel="preload" href="/data/city.bin" as="fetch" crossorigin />
+  </head>
+  <body>
+    <a class="skip" href="#lista">Saltar a la lista de lugares</a>
+    <div id="app">
+      <aside class="panel" id="panel" aria-label="Explorar Orizaba">
+        <button class="sheet-handle" id="sheet-handle" aria-expanded="false" aria-controls="panel-body"><span></span><span class="sr-only">Mostrar u ocultar la lista</span></button>
+        <svg class="papel-picado" viewBox="0 0 392 56" preserveAspectRatio="xMidYMin slice" aria-hidden="true"><path d="M0 5Q196.0 19 392 5" fill="none" stroke="#7a5c3e" stroke-width="1.2" /><use href="#i-pp" x="1.6" y="6.3" width="36" height="43" fill="#5BA85B" style="--i:0" /><use href="#i-pp" x="40.8" y="8.6" width="36" height="43" fill="#DB7A2F" style="--i:1" /><use href="#i-pp" x="80.0" y="10.2" width="36" height="43" fill="#D9314A" style="--i:2" /><use href="#i-pp" x="119.2" y="11.4" width="36" height="43" fill="#D7308F" style="--i:3" /><use href="#i-pp" x="158.4" y="11.9" width="36" height="43" fill="#A33A93" style="--i:4" /><use href="#i-pp" x="197.6" y="11.9" width="36" height="43" fill="#5F47A6" style="--i:5" /><use href="#i-pp" x="236.8" y="11.4" width="36" height="43" fill="#4890D8" style="--i:6" /><use href="#i-pp" x="276.0" y="10.2" width="36" height="43" fill="#5FC0EF" style="--i:7" /><use href="#i-pp" x="315.2" y="8.6" width="36" height="43" fill="#7DC062" style="--i:8" /><use href="#i-pp" x="354.4" y="6.3" width="36" height="43" fill="#F2B035" style="--i:9" /></svg>
+        <header class="brand">
+          <img src="/logo-orizaba.webp" alt="Orizaba Pueblo Mágico" width="280" height="232" fetchpriority="high" />
+          <div>
+            <p class="eyebrow">H. Ayuntamiento de Orizaba</p>
+            <h1>Mapa turístico</h1>
+            <p class="tagline">Ahuilizapan, «en las aguas alegres»</p>
+          </div>
+        </header>
+        <div class="stripe" aria-hidden="true"></div>
+        <div class="panel-body" id="panel-body">
+          <div class="search">
+            <label for="q" class="sr-only">Buscar un lugar</label>
+            <svg class="i" aria-hidden="true"><use href="#i-search" /></svg>
+            <input id="q" type="search" placeholder="Buscar museos, templos, parques…" autocomplete="off" />
+          </div>
+          <section class="routes" aria-labelledby="routes-title">
+            <h2 id="routes-title">Recorridos sugeridos</h2>
+            <div id="routes"></div>
+          </section>
+          <section aria-labelledby="places-title">
+            <div class="list-head" id="list-head"></div>
+            <div class="chips" id="chips" role="group" aria-label="Filtrar por categoría"></div>
+            <div id="lista" class="list" tabindex="-1"></div>
+          </section>
+          <footer class="credits">
+            <p><strong>Propuesta</strong> de mapa turístico para el H. Ayuntamiento de Orizaba. Información por confirmar con la Dirección de Turismo antes de publicarse.</p>
+            <p>Lugares: Mapa de atractivos turísticos de Orizaba (orizaba.travel). Cartografía © colaboradores de OpenStreetMap. Relieve: Terrain Tiles de Mapzen en AWS.</p>
+          </footer>
+        </div>
+      </aside>
+
+      <main class="map" id="map">
+<svg class="backdrop" id="backdrop" viewBox="0 0 1600 420" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+          <defs>
+            <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1"><stop offset="0.45" stop-color="#eaf1f7" stop-opacity="0" /><stop offset="0.95" stop-color="#eaf1f7" /></linearGradient>
+            <linearGradient id="flank" x1="0" y1="0" x2="1" y2="0"><stop offset="0.36" stop-color="#b8cbe0" /><stop offset="0.58" stop-color="#97afca" /></linearGradient>
+            <linearGradient id="snow" x1="0" y1="0" x2="1" y2="0"><stop offset="0.4" stop-color="#ffffff" /><stop offset="0.6" stop-color="#dfe9f3" /></linearGradient>
+            <clipPath id="cone"><path id="cone-shape" d="M170 420C330 330 470 214 586 98L596 91 612 92 622 99C722 196 862 322 1070 420Z" /></clipPath>
+            <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="9" /></filter>
+          </defs>
+          <path d="M0 292C120 262 190 238 300 252S470 214 580 236 760 268 880 240 1060 206 1180 232 1380 258 1480 236 1560 250 1600 246V420H0Z" fill="#cbdaea" />
+          <!-- Citlaltépetl: broad stratovolcano, flat crater rim, ragged glacier line -->
+          <g transform="translate(-170 0)"><use href="#cone-shape" fill="url(#flank)" />
+          <path clip-path="url(#cone)" fill="url(#snow)" d="M380 0H840V206L816 222 798 214 776 238 760 226 742 250 720 232 704 246 684 228 662 258 646 240 628 252 610 236 592 262 576 240 556 250 540 232 522 244 500 224 480 236 458 216 436 226 410 210 380 220Z" /></g>
+          <path d="M0 336C110 312 210 296 330 308S520 330 640 312 840 296 960 318 1180 330 1300 304 1500 306 1600 316V420H0Z" fill="#cfdce9" />
+          <g filter="url(#soft)" fill="#fff"><ellipse cx="285" cy="262" rx="150" ry="16" opacity="0.8" /><ellipse cx="620" cy="236" rx="120" ry="12" opacity="0.7" /></g>
+          <rect x="0" y="0" width="1600" height="420" fill="url(#mist)" />
+        </svg>
+        <canvas id="scene" aria-label="Vista aérea 3D de Orizaba" role="img"></canvas>
+        <div class="pins" id="pins"></div>
+        <div class="controls" role="toolbar" aria-label="Controles del mapa">
+          <button class="ctl" id="north" aria-label="Orientar al norte" title="Orientar al norte"><svg class="i" id="compass" aria-hidden="true"><use href="#i-compass" /></svg></button>
+          <button class="ctl" id="zin" aria-label="Acercar" title="Acercar"><svg class="i" aria-hidden="true"><use href="#i-plus" /></svg></button>
+          <button class="ctl" id="zout" aria-label="Alejar" title="Alejar"><svg class="i" aria-hidden="true"><use href="#i-minus" /></svg></button>
+          <button class="ctl" id="home" aria-label="Vista general" title="Vista general"><svg class="i" aria-hidden="true"><use href="#i-frame" /></svg></button>
+        </div>
+        <p class="hint" id="hint">Arrastra para mover · Clic derecho o Ctrl + arrastrar para girar · Rueda para acercar</p>
+        <p class="no3d" id="no3d" hidden>Este dispositivo no pudo mostrar el mapa en 3D. Puedes recorrer la lista de lugares y abrir cada uno en Google Maps.</p>
+        <article class="detail" id="detail" hidden aria-live="polite"></article>
+        <p class="attribution">© OpenStreetMap · Relieve Mapzen/AWS</p>
+        <div class="loader" id="loader" role="status">
+          <svg class="papel-picado" viewBox="0 0 392 56" preserveAspectRatio="xMidYMin slice" aria-hidden="true"><path d="M0 5Q196.0 19 392 5" fill="none" stroke="#7a5c3e" stroke-width="1.2" /><use href="#i-pp" x="1.6" y="6.3" width="36" height="43" fill="#5BA85B" style="--i:0" /><use href="#i-pp" x="40.8" y="8.6" width="36" height="43" fill="#DB7A2F" style="--i:1" /><use href="#i-pp" x="80.0" y="10.2" width="36" height="43" fill="#D9314A" style="--i:2" /><use href="#i-pp" x="119.2" y="11.4" width="36" height="43" fill="#D7308F" style="--i:3" /><use href="#i-pp" x="158.4" y="11.9" width="36" height="43" fill="#A33A93" style="--i:4" /><use href="#i-pp" x="197.6" y="11.9" width="36" height="43" fill="#5F47A6" style="--i:5" /><use href="#i-pp" x="236.8" y="11.4" width="36" height="43" fill="#4890D8" style="--i:6" /><use href="#i-pp" x="276.0" y="10.2" width="36" height="43" fill="#5FC0EF" style="--i:7" /><use href="#i-pp" x="315.2" y="8.6" width="36" height="43" fill="#7DC062" style="--i:8" /><use href="#i-pp" x="354.4" y="6.3" width="36" height="43" fill="#F2B035" style="--i:9" /></svg>
+          <img src="/logo-orizaba.webp" alt="" width="140" height="116" />
+          <p class="tagline">Ahuilizapan, «en las aguas alegres»</p>
+          <div class="bar"><span></span></div>
+          <p id="loader-msg">Preparando el mapa…</p>
+        </div>
+      </main>
+    </div>
+
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="i-pp" viewBox="0 0 40 48"><path d="M0 0H40V40L35 46L30 40L25 46L20 40L15 46L10 40L5 46L0 40ZM17.6 20a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0 -4.8 0M17.0 13.5a3 3 0 1 0 6 0a3 3 0 1 0 -6 0M17.0 26.5a3 3 0 1 0 6 0a3 3 0 1 0 -6 0M10.5 20a3 3 0 1 0 6 0a3 3 0 1 0 -6 0M23.5 20a3 3 0 1 0 6 0a3 3 0 1 0 -6 0M7 5.4l2.6 2.6-2.6 2.6-2.6-2.6zM33 5.4l2.6 2.6-2.6 2.6-2.6-2.6zM7 28.4l2.6 2.6-2.6 2.6-2.6-2.6zM33 28.4l2.6 2.6-2.6 2.6-2.6-2.6zM6.7 38a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0 -2.6 0M12.7 38a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0 -2.6 0M18.7 38a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0 -2.6 0M24.7 38a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0 -2.6 0M30.7 38a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0 -2.6 0" fill-rule="evenodd" /></symbol>
+        <symbol id="i-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5" /></symbol>
+        <symbol id="i-turn-left" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M20 20v-7a4 4 0 0 0-4-4H4" /></symbol>
+        <symbol id="i-turn-right" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5M4 20v-7a4 4 0 0 1 4-4h12" /></symbol>
+        <symbol id="i-uturn" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></symbol>
+        <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7" /></symbol>
+        <symbol id="i-start" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="2.5" /></symbol>
+        <symbol id="i-map" viewBox="0 0 24 24"><path d="M14.1 5.6a2 2 0 0 0 1.8 0l3.7-1.9a1 1 0 0 1 1.4.9v12.8a1 1 0 0 1-.6.9l-4.5 2.3a2 2 0 0 1-1.8 0l-4.2-2.1a2 2 0 0 0-1.8 0l-3.7 1.8A1 1 0 0 1 3 19.4V6.6a1 1 0 0 1 .6-.9l4.5-2.3a2 2 0 0 1 1.8 0zM15 5.8v15M9 3.2v15" /></symbol>
+        <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3c.5 4 2 5.5 6 6-4 .5-5.5 2-6 6-.5-4-2-5.5-6-6 4-.5 5.5-2 6-6z" /></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.5" /><path d="m21 21-4.6-4.6" /></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14" /></symbol>
+        <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" /></symbol>
+        <symbol id="i-frame" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" /></symbol>
+        <symbol id="i-compass" viewBox="0 0 24 24"><path d="M12 2.5 15.5 12h-7Z" fill="#C8303F" stroke="#C8303F" /><path d="M12 21.5 8.5 12h7Z" /></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></symbol>
+        <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></symbol>
+        <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+        <symbol id="i-nav" viewBox="0 0 24 24"><path d="M3 11 22 2l-9 19-2-8Z" /></symbol>
+        <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></symbol>
+        <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 5-5.5 10.2-7.4 11.8a1 1 0 0 1-1.2 0C9.5 20.2 4 15 4 10a8 8 0 0 1 16 0" /><circle cx="12" cy="10" r="3" /></symbol>
+        <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.5" /><path d="M12 16v-4M12 8h.01" /></symbol>
+        <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="2.5" /><path d="M8.5 19h8.5a3.5 3.5 0 0 0 0-7H7a3.5 3.5 0 0 1 0-7h8.5" /><circle cx="18" cy="5" r="2.5" /></symbol>
+        <symbol id="i-museum" viewBox="0 0 24 24"><path d="M3 21h18M6 18v-7M10 18v-7M14 18v-7M18 18v-7M12 3l9 5H3Z" /></symbol>
+        <symbol id="i-church" viewBox="0 0 24 24"><path d="M12 2v5M10 4h4M6 21V11l6-4 6 4v10M3 21h18M10 21v-4a2 2 0 0 1 4 0v4" /></symbol>
+        <symbol id="i-landmark" viewBox="0 0 24 24"><path d="M3 21h18M5 21V10l7-6 7 6v11M9 21v-5a3 3 0 0 1 6 0v5M9 10h.01M15 10h.01" /></symbol>
+        <symbol id="i-tree" viewBox="0 0 24 24"><path d="m17 14 3 3.3a1 1 0 0 1-.7 1.7H4.7a1 1 0 0 1-.7-1.7L7 14h-.3a1 1 0 0 1-.7-1.7L9 9h-.2A1 1 0 0 1 8 7.3L12 3l4 4.3a1 1 0 0 1-.8 1.7H15l3 3.3a1 1 0 0 1-.7 1.7ZM12 22v-3" /></symbol>
+        <symbol id="i-cable" viewBox="0 0 24 24"><path d="m2 9 20-5M12 12V6.5M4 17h16M9 12v5M15 12v5" /><rect width="16" height="10" x="4" y="12" rx="3" /></symbol>
+        <symbol id="i-basket" viewBox="0 0 24 24"><path d="m15 11-1 9M19 11l-4-7M2 11h20M3.5 11l1.6 7.4a2 2 0 0 0 2 1.6h9.8a2 2 0 0 0 2-1.6l1.7-7.4M4.5 15.5h15M5 11l4-7M9 11l1 9" /></symbol>
+      </defs>
+    </svg>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
