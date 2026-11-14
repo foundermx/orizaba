@@ -56,7 +56,7 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 .panel h2 { display: flex; align-items: center; gap: 10px; margin: 24px 0 10px; font-family: var(--display); font-size: 20px; font-weight: 600; line-height: 1.2; color: var(--tinta); }
 .panel h2::before { content: ''; width: 8px; height: 8px; flex: none; background: var(--terracota); transform: rotate(45deg); }
 .routes { margin-bottom: 6px; }
-#routes { display: grid; gap: 8px; }
+#routes, #buses { display: grid; gap: 8px; }
 .route-card { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 12px; width: 100%; min-height: 66px; padding: 10px 12px; text-align: left; background: #fff; border: 1.5px solid var(--borde); border-radius: var(--radio); transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s; }
 .route-card:hover { border-color: var(--c); box-shadow: 0 6px 16px rgba(60, 40, 15, 0.08); }
 .route-card:active { transform: scale(0.98); }
@@ -87,6 +87,8 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 .badge b { font-size: 15px; font-weight: 800; }
 .item-name { display: block; font-weight: 600; font-size: 15px; line-height: 1.3; }
 .item-meta { display: block; font-size: 13px; color: var(--tinta-2); margin-top: 1px; }
+.bus-note { display: flex; gap: 10px; margin: 0 0 10px; padding: 10px 12px; font-size: 13px; line-height: 1.45; color: var(--tinta-2); background: color-mix(in srgb, var(--c) 7%, #fff); border-left: 4px solid var(--c); border-radius: 0 10px 10px 0; }
+.bus-note .i { width: 18px; height: 18px; margin-top: 1px; color: var(--c); }
 .empty { padding: 16px 4px; color: var(--tinta-2); font-size: 15px; }
 .credits { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--borde); font-size: 12px; line-height: 1.55; color: var(--tinta-2); }
 .credits p { margin: 0 0 8px; }
@@ -123,6 +125,9 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 .cluster { position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 40px; height: 40px; margin: -20px 0 0 -20px; font-weight: 800; font-size: 15px; color: var(--azul-700); background: #fff; border: 3px solid var(--azul); border-radius: 50%; box-shadow: 0 4px 12px rgba(10, 25, 45, 0.3); pointer-events: auto; will-change: transform; }
 .cluster[hidden] { display: none; }
 .area-label { position: absolute; left: 0; top: 0; translate: -50% -50%; font-family: var(--display); font-size: 16px; font-weight: 600; font-style: italic; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6), 0 0 12px rgba(0, 0, 0, 0.35); white-space: nowrap; pointer-events: none; transition: opacity 0.3s; }
+.bus-tag { position: absolute; left: 0; top: 0; translate: -50% calc(-100% - 8px); padding: 3px 10px 4px; font-size: 12px; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; color: #fff; background: var(--c); border: 2px solid #fff; border-radius: 999px; box-shadow: 0 3px 10px rgba(10, 25, 45, 0.3); pointer-events: auto; will-change: transform; }
+.bus-tag[hidden] { display: none; }
+.bus-tag::after { content: ''; position: absolute; left: 50%; bottom: -8px; translate: -50% 0; border: 5px solid transparent; border-top: 6px solid #fff; }
 .start-marker { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 6px; translate: -9px -9px; pointer-events: none; }
 .start-marker[hidden] { display: none; }
 .start-marker::before { content: ''; width: 18px; height: 18px; border-radius: 50%; background: var(--azul); border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(21, 101, 168, 0.25), 0 3px 8px rgba(0, 0, 0, 0.3); }
@@ -228,11 +233,11 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
   .eyebrow { font-size: 10.5px; }
   .panel-body { padding-top: 12px; padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
   .panel, .detail { max-width: 640px; margin-inline: auto; } /* tablets: a centred sheet, not a 1000 px wide one */
-  .controls { top: max(12px, env(safe-area-inset-top)); right: 12px; }
-  .hint { top: calc(env(safe-area-inset-top) + 44px); left: 12px; translate: none; max-width: calc(100% - 84px); text-align: left; font-size: 12.5px; }
+  .controls { top: max(12px, env(safe-area-inset-top)); right: 12px; grid-auto-flow: column; } /* a row, not a column: keeps the top of the map free */
+  .hint { top: calc(max(12px, env(safe-area-inset-top)) + 54px); width: max-content; max-width: calc(100% - 24px); font-size: 12.5px; }
   .detail { position: fixed; left: 0; right: 0; bottom: 0; width: auto; max-height: 74dvh; border-radius: 20px 20px 0 0; z-index: 40; padding-bottom: env(safe-area-inset-bottom); }
   .detail-media { height: 130px; }
-  .attribution { bottom: auto; top: max(12px, env(safe-area-inset-top)); left: 12px; right: auto; }
+  .attribution { bottom: calc(var(--peek, 236px) + 8px); pointer-events: none; } /* just above the sheet: the top row belongs to the controls */
 }
 
 @media (max-width: 360px) {

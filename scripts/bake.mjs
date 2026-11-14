@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PNG } from 'pngjs';
 import { POIS, ROUTES } from '../src/pois.js';
+import { LINES } from '../src/transit.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CACHE = path.join(import.meta.dirname, '.cache');
@@ -11,8 +12,8 @@ const OUT = path.join(ROOT, 'public/data');
 fs.mkdirSync(CACHE, { recursive: true });
 fs.mkdirSync(OUT, { recursive: true });
 
-// Board extent: Cerro del Borrego (W) → 500 Escalones (E), Aeroparque (N) → BIORI (S).
-const BBOX = { s: 18.828, w: -97.131, n: 18.874, e: -97.058 };
+// Board extent: Cerro del Borrego (W) → 500 Escalones (E), northern municipal limit (18.886 N) → BIORI (S).
+const BBOX = { s: 18.828, w: -97.131, n: 18.888, e: -97.058 };
 const LAT0 = (BBOX.s + BBOX.n) / 2, LON0 = (BBOX.w + BBOX.e) / 2;
 const MX = Math.cos((LAT0 * Math.PI) / 180) * 111320; // m per degree lon
 const MZ = 110574; // m per degree lat
@@ -78,13 +79,13 @@ const slopeAt = (x, z) => Math.hypot(hAt(x + STEP, z) - hAt(x - STEP, z), hAt(x,
 console.log(`terrain ${NX}×${NZ} @${STEP} m · ${WIDTH.toFixed(0)}×${DEPTH.toFixed(0)} m · ${hmin.toFixed(0)}–${hmax.toFixed(0)} m`);
 
 // ---------- OSM ----------
-const ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+const ENDPOINTS = ['https://overpass.openstreetmap.fr/api/interpreter', 'https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 async function overpass(name, query) {
   const buf = await cached(name, async () => {
     for (let attempt = 0; attempt < 6; attempt++) {
       const ep = ENDPOINTS[attempt % ENDPOINTS.length];
       try {
-        const r = await fetch(ep, { method: 'POST', body: new URLSearchParams({ data: query }), headers: { 'User-Agent': 'orizaba-map-prototype/0.1' }, signal: AbortSignal.timeout(240000) });
+        const r = await fetch(ep, { method: 'POST', body: new URLSearchParams({ data: query }), headers: { 'User-Agent': 'map-prototype/0.1' }, signal: AbortSignal.timeout(240000) });
         if (r.ok) { const b = Buffer.from(await r.arrayBuffer()); JSON.parse(b); return b; }
         console.warn(`overpass ${ep}: HTTP ${r.status}`);
       } catch (e) { console.warn(`overpass ${ep}: ${e.message}`); }
@@ -344,6 +345,96 @@ for (const r of ROUTES) {
   console.log(`route ${r.id}: ${(walk / 1000).toFixed(2)} km a pie${cable ? ` + ${cable.toFixed(0)} m teleférico` : ''}`);
 }
 
+// ---------- bus lines (src/transit.js): driven along the streets, one-way aware, through their waypoints ----------
+const DRIVE = { 0: 0.8, 1: 0.85, 2: 0.9, 3: 1 }; // buses keep to real streets and prefer avenues
+const WRONG_WAY = 6; // against a one-way: possible (OSM is not perfect) but only for a short stretch
+const dadj = ids.map(() => []), wayNames = [], drivable = new Uint8Array(ids.length);
+for (const w of ways) {
+  const f = DRIVE[ROAD[w.tags.highway]];
+  if (!f || w.tags.highway.startsWith('motorway')) continue;
+  const one = w.tags.oneway === 'yes' || w.tags.junction === 'roundabout' ? 1 : w.tags.oneway === '-1' ? -1 : 0;
+  wayNames.push(w.tags.name || '');
+  for (let i = 0; i + 1 < w.nodes.length; i++) {
+    const a = index.get(w.nodes[i]), b = index.get(w.nodes[i + 1]);
+    const [ax, az] = nodes.get(w.nodes[i]), [bx, bz] = nodes.get(w.nodes[i + 1]), len = Math.hypot(bx - ax, bz - az);
+    dadj[a].push(b, len * f * (one < 0 ? WRONG_WAY : 1), wayNames.length - 1);
+    dadj[b].push(a, len * f * (one > 0 ? WRONG_WAY : 1), wayNames.length - 1);
+    if (comp[a] === best) drivable[a] = drivable[b] = 1;
+  }
+}
+const segDist = (x, z, ax, az, bx, bz) => {
+  const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+  return Math.hypot(x - ax - dx * t, z - az - dz * t);
+};
+// every node's cost from src; `off` (metres from the poster's trace, per node) keeps guided lines on the drawn streets
+function driveFrom(src, off) {
+  const dist = new Float64Array(ids.length).fill(Infinity), prev = new Int32Array(ids.length).fill(-1), via = new Int32Array(ids.length).fill(-1);
+  const heap = [[0, src]]; dist[src] = 0;
+  const push = (e) => { heap.push(e); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+  while (heap.length) {
+    const [d, u] = pop();
+    if (d > dist[u]) continue;
+    for (let k = 0; k < dadj[u].length; k += 3) {
+      const v = dadj[u][k], away = off ? Math.min(250, (off[u] + off[v]) / 2) / 20 : 0, nd = d + dadj[u][k + 1] * (1 + away * away);
+      if (nd < dist[v]) { dist[v] = nd; prev[v] = u; via[v] = dadj[u][k + 2]; push([nd, v]); }
+    }
+  }
+  return { dist, prev, via };
+}
+const transit = {};
+for (const line of LINES) {
+  const pts = line.route.map((p) => ({ ...p, xz: toXZ(p.lat, p.lon) }));
+  let off = null;
+  if (line.guided) {
+    const g = [...pts, pts[0]].map((p) => p.xz);
+    off = new Float32Array(ids.length);
+    for (let i = 0; i < ids.length; i++) {
+      if (!drivable[i]) continue;
+      const [x, z] = nodes.get(ids[i]);
+      let d = Infinity;
+      for (let k = 0; k + 1 < g.length; k++) d = Math.min(d, segDist(x, z, ...g[k], ...g[k + 1]));
+      off[i] = d;
+    }
+  }
+  // stops and corners must be driven through; a stop may be reached from either carriageway, so keep every node near it
+  const hard = pts.filter((p) => p.name || p.pass || !line.guided).map((p) => {
+    const near = [];
+    for (let i = 0; i < ids.length; i++) if (drivable[i]) { const [x, z] = nodes.get(ids[i]); near.push([Math.hypot(x - p.xz[0], z - p.xz[1]), i]); }
+    near.sort((a, b) => a[0] - b[0]);
+    return { ...p, cand: near.filter(([d]) => d < Math.max(40, near[0][0] + 25)) };
+  });
+  const pick = (from, cand) => { // cheapest candidate to reach, a little weight on how far it is from the stop itself
+    const r = driveFrom(from, off);
+    let bestC = null;
+    for (const [d, i] of cand) { const c = r.dist[i] + d * 3; if (!bestC || c < bestC.cost) bestC = { cost: c, node: i, r }; }
+    if (!bestC || bestC.cost === Infinity) throw new Error(`line ${line.id}: unreachable waypoint`);
+    return bestC;
+  };
+  let start = null; // the first stop: whichever of its nodes starts the cheapest first leg
+  for (const [d, i] of hard[0].cand) { const c = pick(i, hard[1].cand).cost + d * 3; if (!start || c < start.cost) start = { cost: c, node: i }; }
+  const coords = [], stops = [], streets = [];
+  let length = 0, cur = start.node;
+  const add = ([x, z], name) => {
+    const n = coords.length, d = n ? Math.hypot(x - coords[n - 2], z - coords[n - 1]) : 0;
+    if (n && d < 0.5) return;
+    coords.push(r1(x), r1(z)); length += d;
+    if (name !== undefined) { if (streets.at(-1)?.[0] === name) streets.at(-1)[1] += d; else streets.push([name, d]); }
+  };
+  add(nodes.get(ids[cur]));
+  const legs = line.loop ? [...hard.slice(1), { ...hard[0], cand: [[0, start.node]] }] : hard.slice(1);
+  if (hard[0].name) stops.push(0);
+  legs.forEach((h, k) => {
+    const { node, r } = pick(cur, h.cand), path = [];
+    for (let u = node; u !== cur; u = r.prev[u]) path.unshift(u);
+    for (const u of path) add(nodes.get(ids[u]), wayNames[r.via[u]]);
+    cur = node;
+    if (h.name && k < hard.length - 1) stops.push(coords.length / 2 - 1);
+  });
+  transit[line.id] = { coords, stops, length: Math.round(length) };
+  console.log(`line ${line.id}: ${(length / 1000).toFixed(2)} km, ${stops.length} stops · ${streets.filter(([, d]) => d > 60).map(([n, d]) => `${n || '?'} ${d.toFixed(0)}`).join(' → ')}`);
+}
+
 // ---------- walking graph for in-app directions (lazy-loaded by the page) ----------
 const gIndex = new Int32Array(ids.length).fill(-1), gNodes = [], gEdges = [], names = [''], nameIdx = new Map([['', 0]]);
 ids.forEach((id, i) => { if (comp[i] === best) { gIndex[i] = gNodes.length / 2; gNodes.push(...nodes.get(id).map(Math.round)); } });
@@ -390,7 +481,7 @@ const int = (a) => a.map(Math.round);
 const map = {
   meta: { lat0: LAT0, lon0: LON0, mx: MX, mz: MZ, width: WIDTH, depth: DEPTH, nx: NX, nz: NZ, step: STEP, hmin, hmax,
     city: { rects: nRect, polys: buildings.length, polyBytes, tree: TREE } },
-  roads: clip(roads).map(int), areas: areas.map(int), water: water(), rails: rails.map(int), aerial, routes,
+  roads: clip(roads).map(int), areas: areas.map(int), water: water(), rails: rails.map(int), aerial, routes, transit,
 };
 function water() { return waterLines.map((w) => [w[0], ...w.slice(1).map(Math.round)]); }
 fs.writeFileSync(path.join(OUT, 'map.json'), JSON.stringify(map));
