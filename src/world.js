@@ -1,5 +1,5 @@
 // The diorama: real terrain cut as a block, painted streets, extruded city, instanced trees,
-// animated teleférico and route lines. Metres throughout (x east, z south, y up).
+// animated teleférico, municipal buses and route lines. Metres throughout (x east, z south, y up).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -7,6 +7,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LINES } from './transit.js';
 
 const EXAG = 1.7; // terrain vertical exaggeration
 const LEVEL = 3.2 * 2.2; // metres per building level (exaggerated so the city reads from above)
@@ -72,7 +73,8 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
   if (Q.shadow) {
     sun.castShadow = true;
     sun.shadow.mapSize.setScalar(Q.shadow);
-    Object.assign(sun.shadow.camera, { left: -5400, right: 5400, top: 4200, bottom: -4200, near: 100, far: 20000 });
+    const hx = W / 2 + 80, hz = D / 2 + 80, sr = hx * 0.547 + hz * 0.837, su = hx * 0.6 + hz * 0.393; // the board as the sun sees it
+    Object.assign(sun.shadow.camera, { left: -sr, right: sr, top: su + 900, bottom: -su - 100, near: 100, far: 20000 });
     sun.shadow.bias = -0.0003;
     sun.shadow.normalBias = 2;
   }
@@ -90,7 +92,7 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
     mouseButtons: { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE },
     touches: { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE },
   });
-  const cityY = yAt(...toXZ(18.8488, -97.1049));
+  const cityY = yAt(...toXZ(18.8488, -97.1049)), townZ = toXZ(18.8488, -97.1049)[1] - 240; // Parque Castillo
 
   // ---------- terrain ----------
   onProgress('Pintando calles y ríos…');
@@ -444,8 +446,12 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
     new LineMaterial({ color: 0xf2a900, linewidth: 5, dashed: true, dashSize: 28, gapSize: 16, depthTest: false, transparent: true }),
     new LineMaterial({ color: 0xffffff, linewidth: 10, depthTest: false, transparent: true, opacity: 0.95 }),
     new LineMaterial({ color: 0x1565a8, linewidth: 5.5, depthTest: false, transparent: true }),
+    // bus lines = white casing + the line's colour + small white dashes that run the way the bus does
+    new LineMaterial({ color: 0xffffff, linewidth: 10, depthTest: false, transparent: true, opacity: 0.95 }),
+    new LineMaterial({ color: 0xd21f45, linewidth: 6, depthTest: false, transparent: true }),
+    new LineMaterial({ color: 0xffffff, linewidth: 2.5, dashed: true, dashSize: 12, gapSize: 30, depthTest: false, transparent: true, opacity: 0.9 }),
   ];
-  const layers = { route: [], path: [] };
+  const layers = { route: [], path: [], bus: [] };
   function draw(layer, coords, mats, cableAt = new Set()) {
     for (const l of layers[layer]) { scene.remove(l); l.geometry.dispose(); }
     layers[layer] = [];
@@ -469,7 +475,7 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
       geo.setPositions(flat);
       const line = new Line2(geo, mat);
       line.computeLineDistances();
-      line.renderOrder = layer === 'path' ? 11 : 10;
+      line.renderOrder = layer === 'path' ? 11 : layer === 'bus' ? 9 : 10;
       scene.add(line);
       layers[layer].push(line);
     }
@@ -483,13 +489,155 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
     routeAnim = !!r;
     return draw('route', r?.coords, lineMats.slice(0, 2), r && new Set(stops.map((s, i) => (s.startsWith('~') ? r.legs[i] : -1))));
   };
-  const showPath = (coords) => draw('path', coords, lineMats.slice(2));
+  const showPath = (coords) => draw('path', coords, lineMats.slice(2, 4));
+  let busLine = null;
+  const showTransit = (id) => {
+    const t = id && map.transit?.[id];
+    busLine = t ? id : null;
+    if (t) lineMats[5].color.set(LINES.find((l) => l.id === id).color);
+    return draw('bus', t?.coords, lineMats.slice(4));
+  };
+
+  // ---------- buses (src/transit.js): toy buses driving the municipal lines. They grow as the camera pulls away so
+  // they stay findable; each one is a single mesh (vertex colours × a small livery atlas) ----------
+  const LIVERY = {
+    gallo: { body: '#f6f4ee', roof: '#f6f4ee', band: '#d21f45', accent: '#f6c21c', crest: '#d21f45', ink: '#d21f45', word: 'GALLO' },
+    gallina: { body: '#f7a9cb', roof: '#fbc4dc', band: '#d6257f', accent: '#fff0f6', crest: '#e23d8f', ink: '#b9126a', word: 'GALLINA' },
+    buho: { body: '#f3f0f7', roof: '#6a2c91', band: '#6a2c91', accent: '#b792d8', tufts: '#6a2c91', ink: '#6a2c91', roofInk: '#ffffff', word: 'BÚHO' },
+  };
+  function makeBus(L) { // metres, nose towards +z, wheels on y = 0
+    const parts = [], GLASS = '#26323c', DARK = '#2a2d33';
+    const part = (geo, color, decal) => { // solid parts sample the white corner of the atlas; decals keep their UVs
+      const g = geo.index ? geo.toNonIndexed() : geo, n = g.attributes.position.count, c = new THREE.Color(color), col = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      if (decal) { const uv = g.attributes.uv; for (let i = 0; i < n; i++) uv.setXY(i, decal[0] + uv.getX(i) * (decal[2] - decal[0]), decal[1] + uv.getY(i) * (decal[3] - decal[1])); }
+      else g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2).map((_, i) => (i % 2 ? 0.03 : 0.98)), 2));
+      parts.push(g);
+    };
+    const box = (w, h, d, x, y, z, color) => part(new THREE.BoxGeometry(w, h, d).translate(x, y, z), color);
+    const disc = (r, w, x, y, z, color, seg = 14) => part(new THREE.CylinderGeometry(r, r, w, seg).rotateZ(Math.PI / 2).translate(x, y, z), color);
+    // body: side silhouette (length, height) extruded across the width; raked windscreen, flat roof
+    const side = new THREE.Shape([[-4.5, 0.55], [4.3, 0.55], [4.55, 0.8], [4.55, 1.5], [4.15, 2.85], [3.75, 3], [-4.3, 3], [-4.5, 2.8]].map(([a, b]) => new THREE.Vector2(a, b)));
+    part(new THREE.ExtrudeGeometry(side, { depth: 2.5, bevelEnabled: false }).translate(0, 0, -1.25).rotateY(-Math.PI / 2), L.body);
+    box(2.3, 0.3, 8.6, 0, 0.5, 0, DARK); // underbody
+    box(2.2, 0.08, 7.4, 0, 3.02, -0.45, L.roof);
+    part(new THREE.BoxGeometry(2.2, 1.2, 0.06).rotateX(-0.288).translate(0, 2.18, 4.37), GLASS); // windscreen
+    box(2.54, 0.28, 0.2, 0, 0.72, 4.5, DARK); // bumper
+    box(1.3, 0.38, 0.06, 0, 1.12, 4.56, DARK); // grille
+    box(2.3, 0.16, 0.06, 0, 1.42, 4.56, L.accent);
+    box(2, 0.8, 0.06, 0, 2.25, -4.5, GLASS); // rear window
+    for (const sx of [-1, 1]) {
+      box(0.06, 0.95, 6.9, sx * 1.25, 2.25, -0.55, GLASS);
+      box(0.06, 0.95, 0.85, sx * 1.25, 2.25, 3.5, GLASS);
+      for (const z of [-2.8, -1.6, -0.4, 0.8, 2]) box(0.07, 0.95, 0.12, sx * 1.26, 2.25, z, L.body); // window pillars
+      box(0.4, 0.22, 0.06, sx * 0.92, 1.12, 4.56, '#fff6d0'); // headlights
+      box(0.3, 0.2, 0.06, sx * 0.95, 1.2, -4.5, '#c8352b'); // tail lights
+      for (const z of [2.9, -2.7]) { disc(0.52, 0.36, sx * 1.14, 0.52, z, '#1c1e22'); disc(0.24, 0.38, sx * 1.14, 0.52, z, '#b9bcc2', 10); }
+      // livery along the flank: band, accent stripe and the name (reads left to right on both sides)
+      part(new THREE.PlaneGeometry(8.4, 1.05).rotateY((sx * Math.PI) / 2).translate(sx * 1.275, 1.205, 0), '#ffffff', [0, 0.508, 1, 0.996]);
+    }
+    part(new THREE.PlaneGeometry(5.4, 1.5).rotateX(-Math.PI / 2).rotateY(Math.PI / 2).translate(0, 3.075, -1.1), '#ffffff', [0.004, 0.008, 0.496, 0.492]); // name on the roof
+    if (L.crest) { // the rooster's comb on the roof, as on the real buses
+      box(0.24, 0.3, 1.9, 0, 3.1, 2.6, L.crest);
+      for (const [z, r, h] of [[3.35, 0.3, 0.3], [2.85, 0.36, 0.42], [2.3, 0.33, 0.36], [1.8, 0.26, 0.24]]) disc(r, 0.24, 0, 3 + h, z, L.crest, 16);
+    }
+    if (L.tufts) for (const sx of [-1, 1]) part(new THREE.ConeGeometry(0.22, 0.62, 8).translate(sx * 0.8, 3.3, 3.2), L.tufts); // owl ear tufts
+    const c = Object.assign(document.createElement('canvas'), { width: 1024, height: 256 }), g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, 1024, 256);
+    g.fillStyle = L.body; g.fillRect(0, 0, 1024, 128);
+    g.fillStyle = L.accent; g.fillRect(0, 84, 1024, 10);
+    g.fillStyle = L.band; g.fillRect(0, 94, 1024, 34);
+    Object.assign(g, { textAlign: 'center', textBaseline: 'alphabetic', fillStyle: L.ink, font: 'italic 900 78px Montserrat, "Arial Black", Arial, sans-serif' });
+    g.fillText(L.word, 512, 74);
+    g.fillStyle = L.roof; g.fillRect(0, 128, 524, 128);
+    Object.assign(g, { fillStyle: L.roofInk ?? L.ink, font: 'italic 900 96px Montserrat, "Arial Black", Arial, sans-serif' });
+    g.fillText(L.word, 256, 226, 480);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+    // "transparent" only to be drawn after the route lines (which ignore depth), so a bus is never striped by its own line
+    const mesh = new THREE.Mesh(mergeGeometries(parts), lambert({ map: tex, vertexColors: true, transparent: true }));
+    mesh.renderOrder = 20;
+    return mesh;
+  }
+  const buses = [];
+  function buildBuses() {
+    for (const line of LINES) {
+      const t = map.transit?.[line.id];
+      if (!t) continue;
+      const n = t.coords.length / 2, x = new Float32Array(n), z = new Float32Array(n), cum = new Float32Array(n);
+      for (let i = 0; i < n; i++) { x[i] = t.coords[2 * i]; z[i] = t.coords[2 * i + 1]; if (i) cum[i] = cum[i - 1] + Math.hypot(x[i] - x[i - 1], z[i] - z[i - 1]); }
+      const path = { x, z, cum, total: cum[n - 1], stops: line.numbered ? t.stops.map((i) => cum[i]) : [] }; // closed loop
+      line.buses.forEach((b, k) => {
+        const mesh = makeBus(LIVERY[b.livery]), s = (path.total * k) / line.buses.length;
+        mesh.userData.line = line.id;
+        buses.push({ line: line.id, name: b.name, color: b.color, mesh, path, s, wait: 0, next: Math.max(0, path.stops.findIndex((d) => d > s)), heading: null, pos: mesh.position, top: 0 });
+      });
+    }
+    return buses.map((b) => b.mesh);
+  }
+  const along = (p, s, out) => { // point at distance s along a closed path
+    s = ((s % p.total) + p.total) % p.total;
+    let lo = 0, hi = p.cum.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (p.cum[m] <= s) lo = m; else hi = m; }
+    const t = (s - p.cum[lo]) / (p.cum[hi] - p.cum[lo] || 1);
+    out.x = p.x[lo] + (p.x[hi] - p.x[lo]) * t; out.z = p.z[lo] + (p.z[hi] - p.z[lo]) * t;
+    return out;
+  };
+  const pa = { x: 0, z: 0 }, pb = { x: 0, z: 0 }, pc = { x: 0, z: 0 };
+  function moveBuses(dt, dist) {
+    const k = clamp(dist * 0.0029 + 1.6, 3.2, 36), speed = clamp(dist * 0.006, 14, 60); // size and pace follow the zoom
+    for (const b of buses) {
+      const p = b.path;
+      if (b.wait > 0) b.wait -= dt;
+      else if (dt) {
+        let step = speed * dt;
+        if (p.stops.length) { // ease into each stop, wait a moment, ease out
+          const n = p.stops.length, ahead = (p.stops[b.next] - b.s + p.total) % p.total, behind = (b.s - p.stops[(b.next + n - 1) % n] + p.total) % p.total;
+          step *= clamp(Math.min(ahead, behind + k * 2) / (k * 12), 0.3, 1);
+          if (step >= ahead) { step = ahead; b.wait = 1.6; b.next = (b.next + 1) % n; }
+        }
+        b.s = (b.s + step) % p.total;
+      }
+      const half = k * 2.8; // heading = chord between the axles, so corners are taken smoothly
+      along(p, b.s, pc); along(p, b.s + half, pa); along(p, b.s - half, pb);
+      const dx = pa.x - pb.x, dz = pa.z - pb.z;
+      if (dx * dx + dz * dz > 1) {
+        const want = Math.atan2(dx, dz), turn = b.heading === null ? 0 : Math.atan2(Math.sin(want - b.heading), Math.cos(want - b.heading)), max = dt ? 2.6 * dt : Math.PI;
+        b.heading = b.heading === null ? want : b.heading + clamp(turn, -max, max); // turnarounds swing round instead of flipping
+      }
+      const h = b.heading ?? 0, x = pc.x - Math.cos(h) * k * 1.15, z = pc.z + Math.sin(h) * k * 1.15; // keep right: oncoming buses pass alongside
+      b.mesh.position.set(x, Math.max(yAt(x, z), (yAt(pa.x, pa.z) + yAt(pb.x, pb.z)) / 2) + 0.4, z);
+      b.mesh.rotation.y = h;
+      b.mesh.scale.setScalar(k);
+      b.top = 3.5 * k;
+    }
+  }
+  // a click (not a drag) on a bus opens its line
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  let downAt = null, onBusPick = null;
+  canvas.addEventListener('pointerdown', (e) => (downAt = [e.clientX, e.clientY]));
+  canvas.addEventListener('pointerup', (e) => {
+    if (!downAt || !onBusPick || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+    const r = canvas.getBoundingClientRect();
+    ray.setFromCamera(ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, 1 - ((e.clientY - r.top) / r.height) * 2), camera);
+    const hit = ray.intersectObjects(buses.map((b) => b.mesh), false)[0];
+    if (hit) onBusPick(hit.object.userData.line);
+  });
 
   // ---------- camera moves ----------
   const HOME = { x: 0, z: 120, dist: 10200, polar: 0.98, az: -0.16 };
   const fitHome = () => { // distance at which the board's width (plus margin) fills the view
     const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
-    HOME.dist = clamp((W * (camera.aspect < 1 ? 0.45 : 0.55)) / Math.tan(hfov / 2), 8000, 30000);
+    // phones held upright (1 → 0 towards tablets): the board is cropped at the sides anyway, so come closer, look a bit
+    // more from above, centre on the town and lift the board into the free sky above the bottom sheet
+    const phone = clamp((0.7 - camera.aspect) / 0.12, 0, 1);
+    // the board's near edge is what gets cropped first, so a deeper board needs the camera a little further back
+    HOME.dist = clamp((W * (camera.aspect < 1 ? 0.45 - 0.13 * phone : 0.55)) / Math.tan(hfov / 2) + Math.max(0, D / 2 - 2543) * 0.83 * (1 - phone), 8000, 30000);
+    HOME.polar = 0.98 - 0.13 * phone;
+    HOME.x = -450 * phone;
+    HOME.z = Math.min(120 + (townZ + HOME.dist * 0.11) * phone, D / 2 - 50); // the loop keeps the target on the board
     controls.maxDistance = HOME.dist * 1.4;
   };
   let tween = null;
@@ -510,7 +658,7 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
 
   // ---------- loop: render only when something changed; drop resolution while moving if the device struggles ----------
   const frameCbs = [];
-  let lastSig = '', lastMove = 0, slow = 0, lowWhileMoving = false, lowRes = false;
+  let lastSig = '', lastMove = 0, slow = 0, lowWhileMoving = false, lowRes = false, busDt = 0, odd = false;
   const resize = () => {
     const { clientWidth: w, clientHeight: h } = canvas.parentElement;
     if (!w || !h) return;
@@ -524,6 +672,7 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
   new ResizeObserver(resize).observe(canvas.parentElement);
   resize();
   setView(HOME);
+  scene.add(...buildBuses());
   const clock = new THREE.Clock();
   const loop = () => {
     const raw = clock.getDelta(), dt = Math.min(raw, 0.05), now = performance.now();
@@ -549,8 +698,14 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
     } else if (lowRes && now - lastMove > 220) { renderer.setPixelRatio(dpr); lowRes = false; needs = true; }
     const gondolasOn = gondolas.length > 0 && !reduceMotion && dist < 4500 && cableMid.distanceTo(controls.target) < 3000;
     const dashes = routeAnim && !reduceMotion;
-    if (moved || tween || gondolasOn || dashes || needs) {
+    // buses always run (except on the weakest devices, unless their line is open); seen from afar, at half the frame rate
+    const busesOn = buses.length > 0 && !reduceMotion && (!!busLine || tier !== 'baja'), skip = busesOn && !busLine && dist > 3500 && (odd = !odd);
+    busDt += dt;
+    if (moved || tween || gondolasOn || dashes || (busesOn && !skip) || needs) {
       needs = false;
+      moveBuses(busesOn ? busDt : 0, dist);
+      busDt = 0;
+      if (busesOn && busLine) lineMats[6].dashOffset -= dt * 40;
       if (gondolasOn)
         for (const g of gondolas) {
           const u = (clock.elapsedTime * 0.012 + g.phase) % 1, along = g.dir > 0 ? u : 1 - u;
@@ -607,5 +762,9 @@ export async function createWorld(canvas, { reduceMotion, onProgress }) {
     showRoute,
     showPath,
     routeInfo: (id) => map.routes[id],
+    showTransit,
+    transitInfo(id) { const t = map.transit?.[id]; return t && { length: t.length, stops: t.stops.map((i) => [t.coords[2 * i], t.coords[2 * i + 1]]) }; },
+    buses, // live: { line, name, color, pos, top }
+    onBusPick: (cb) => (onBusPick = cb),
   };
 }
